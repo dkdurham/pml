@@ -1,0 +1,145 @@
+---
+title: "PML Prediction Assignment"
+author: "Denver Durham"
+date: "12/31/2016"
+output: html_document
+---
+
+# Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+The goal of this project will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the method of movement. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data
+
+The training data for this project are available here:
+[link](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+The test data are available here:
+[link](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+# Setup
+We will begin by loading the necessary packages and importing the data. We will primarily depend on the Caret package, as well as rpart, gbm, and randomForest.
+
+```{r setup, include=TRUE}
+library(caret)
+library(pgmm) 
+library(rpart)
+library(rpart.plot)
+library(gbm)
+library(randomForest)
+
+## Importing the Data
+pml_train <- read.csv('pml-training.csv', header=T, na.strings=c("NA","#DIV/0!",""), 
+                      stringsAsFactors = F)
+pml_test <- read.csv('pml-testing.csv', header=T, na.strings=c("NA","#DIV/0!",""), 
+                     stringsAsFactors = F)
+```
+
+# Observe the Data
+
+Initial observation of the data reveals that there are a number of columns irrelevant to our prediction models as well as a large number of NA's in any unused columns of gyroscopic readings. 
+
+# Clean and Partition the Data
+Next the data is modified to remove columns 1-8 and all NA entries. We will then Partition the 'train' dataset into training and testing sets using the 60/40 distribution.
+
+```{r cleaning, include=TRUE}
+## Partitioning the Data
+pml_train$classe <- as.factor(pml_train$classe)
+set.seed(33833)
+inTrain <- createDataPartition(pml_train$classe, p=0.6, list=FALSE)
+training <- pml_train[inTrain,]
+testing <- pml_train[-inTrain,]
+
+## Cleaning the Data
+nzv <- nearZeroVar(training)
+training <- training[, -nzv]
+testing <- testing[, -nzv]
+
+# remove variables that are high frequency NA
+mostlyNA <- sapply(training, function(x) mean(is.na(x))) > 0.95
+training <- training[, mostlyNA==F]
+testing <- testing[, mostlyNA==F]
+
+# remove variables that don't make sense for prediction model
+training <- training[, -(1:5)]
+testing <- testing[, -(1:5)]
+```
+
+
+# Modeling and Predicting the Data
+In order to determine the most accurate prediction model, the test data will be modeled against Decision Tree, Random Forest, Boosting, and LDA, as well as a combined model of RF, GBM, and LDA, processed as Random Forest. Based on the accuracy rate of these models we will be able to determine the best fit for predicting against the test data.
+
+## Building a Random Forest
+```{r RF_Model, include=TRUE}
+## Building Random Forest
+set.seed(3833)
+model_rf <- train(classe~ ., data = training, method="rf")
+pred_rf <- predict(model_rf, testing)
+confusionMatrix(pred_rf, testing$classe)
+plot(model_rf$finalModel)
+```
+
+Random Forest yields an exceptional accuracy rate of prediction at 99.8%. We will continue with the addtional models however, to be thorough in our search for the best prediction.
+
+## Building a Boosting Model
+```{r GBM_Model, results="hide"}
+## Building Boosting Model
+set.seed(3833)
+model_gbm <- train(classe~ ., data= training, method="gbm")
+```
+
+```{r GBM_pred, include=TRUE}
+pred_gbm <- predict(model_gbm, testing)
+confusionMatrix(pred_gbm, testing$classe)
+plot(model_gbm)
+```
+
+Boosting also provided an excellent accuracy of 98.7%. The graph illustrates the increase in accuracy with bootstrapping and branch iterations.
+
+Last we will consider an Rpart model. 
+
+## Building an Rpart Model
+```{r Rpart_Model, include=TRUE}
+## Building Rpart 
+set.seed(3833)
+model_rpart <- train(classe~., data = training, method="rpart")
+pred_rpart <- predict(model_rpart, testing)
+confusionMatrix(pred_rpart, testing$classe)
+```
+
+Rpart accuracy is much lower, barely over 52.5%, so we will eliminate this as a possible model for our dataset. 
+
+## Building a Combined Model
+Given the very high accuracy with both Random Forest and GBM, we can build a combined model to see if the accuracy will go any higher. This really is just an experimental step however, considering that the RF yielded an accuracy of 99.8%. We also risk overfitting the training data, but we're curious how much it would affect the accuracy!
+
+```{r Comb_Model, include=TRUE}
+# Combined Model utilizing Random Forest
+set.seed(3833)
+predDF <- data.frame(pred_rf, pred_gbm, classe = testing$classe)
+combModFit <- train(classe ~ ., method = "rf", data = predDF)
+combPred <- predict(combModFit, predDF)
+confusionMatrix(combPred, testing$classe)
+```
+
+## Results
+Results indicate that the Random Forest gives the best prediction, with an over 99% accuracy. 
+
+## In Sample and Out of Sample Error Rate
+The sample error rate is essentially the percentage of inaccuracy for our given model. Therefore the in-sample error rate would be .2%. The risk is that this error rate is different from the out-of-sample error due to overfitting and that it would drastically increase on the test data. With the methods we used of fitting to 60% of the training data then predicting against 40%, plus compiling multiple models for testing, the liklihood of overfitting is low and we can expect that even with a moderate increase of inaccuracy, the out-of-sample error will not exceed more than a couple percent (i.e. a couple errors for every hundred samples).
+
+# Predicting the Test data
+## Cleaning the Test data
+```{r Test_clean, include=TRUE}
+pml_test <- pml_test[, -nzv]
+pml_test <- pml_test[, mostlyNA==F]
+pml_test <- pml_test[, -(1:5)]
+```
+
+## Random Forest Prediction
+```{r RF_Test, include=TRUE}
+predictionRF <- predict(model_rf, pml_test)
+predictionRF
+```
+
+We validate that all our predictions are correct and the model fits very well, even accounting for possible out of sample error.
